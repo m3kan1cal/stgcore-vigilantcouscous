@@ -1,0 +1,465 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template deploys Fargate ECS cluster for running ECS tasks and containers.
+             Resources built include the ECS roles and EC2 security groups needed to run tasks.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Account Details
+        Parameters:
+          - AccountSet
+          - Owner
+          - SecurityContact
+      - Label:
+          default: Related Stacks
+        Parameters:
+          - VPCStack
+      - Label:
+          default: Required Tags
+        Parameters:
+          - Environment
+          - Customer
+          - Application
+          - ApplicationVersion
+          - ApplicationRole
+          - InfrastructureVersion
+          - ProjectCostCenter
+          - OperatingCostCenter
+          - Confidentiality
+          - Compliance
+          - AutomateOption
+          - AutomateAt
+
+Parameters:
+  VPCStack:
+    Type: String
+    ConstraintDescription: Must be a valid parent stack name for references within this template.
+    Description: The parent stack name for references within this template.
+
+  # Mandatory tags that will be added to all resources that support tags.
+  # https://aws.amazon.com/answers/account-management/aws-tagging-strategies/
+  AccountSet:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: stoic
+    Description: Name of the Account Set to deploy to.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - sandbox
+      - nonprod
+      - prod
+    Default: sandbox
+    ConstraintDescription: Must be a valid environment.
+    Description: Used to distinguish between sandbox, development, test, and production
+                 infrastructure.
+
+  Customer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: STG
+    ConstraintDescription: Must be a valid customer name.
+    Description: Used to identify a specific client that a particular group of
+                 resources serves.
+
+  Application:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: STGPillarOfAutumn
+    ConstraintDescription: Must be a valid application and resource prefix.
+    Description: In this capacity, application does not refer to an installed software component,
+                 but rather the overall business application that the resource supports. Also,
+                 used as the resource prefix for other resources.
+
+  ApplicationVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid application version.
+    Description: Used to help distinguish between different versions of resources or
+                 applications. Format should be Pattern - '#.#.#'.
+
+  ApplicationRole:
+    Type: String
+    AllowedValues:
+      - Networking
+      - WebServer
+      - MessageBroker
+      - Database
+      - WebUI
+      - DataCache
+      - Orchestrator
+    Default: Orchestrator
+    ConstraintDescription: Must be a valid application role.
+    Description: Used to describe the function of a particular resource (e.g. networking,
+                 web server, message broker, database).
+
+  InfrastructureVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid infrastructure version.
+    Description: Used to help distinguish between different versions of resources or applications.
+                 Format should be Pattern - '#.#.#'.
+
+  ProjectCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  OperatingCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  Owner:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: Used to identify who is responsible for the resource.
+
+  SecurityContact:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: The owner key is used to designate the CBG team associated with the given
+                 AWS resource.
+
+  Confidentiality:
+    Type: String
+    AllowedValues:
+      - Public
+      - Private
+      - Confidential
+      - PII/PHI
+    Default: PII/PHI
+    ConstraintDescription: Must be a valid data-confidentiality level.
+    Description: An identifier for the specific data-confidentiality level a resource supports.
+
+  Compliance:
+    Type: String
+    AllowedValues:
+      - HIPAA
+      - SOX
+      - FIPS
+      - Other
+      - None
+    Default: HIPAA
+    ConstraintDescription: Must be a valid compliance level.
+    Description: An identifier for workloads designed to adhere to specific compliance requirements.
+
+  AutomateOption:
+    Type: String
+    AllowedValues:
+      - OptIn
+      - OptOut
+    Default: OptIn
+    ConstraintDescription: Must be a valid automation level.
+    Description: Used to indicate whether a resource should be automatically included in an
+                 automated activity such as starting, stopping, or resizing instances.
+
+  AutomateAt:
+    Type: String
+    AllowedPattern: '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]'
+    Default: '9999-12-31 13:37'
+    ConstraintDescription: Must be a valid date timestamp in YYYY-MM-DD HH:MM timestamp format.
+    Description: Used to identify the date or time a resource should be started, stopped,
+                 deleted, or rotated.
+
+Resources:
+
+  # ECS resources for Amazon Elastic Container Service (Amazon ECS) cluster.
+  # Phase 1: Containers & ALB running in public subnet.
+  # Phase 2: Containers in private subnet, ALB in public subnet.
+  # https://github.com/nathanpeck/aws-cloudformation-fargate
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${Application}-ECSCluster
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-ECSCluster
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # A security group for the containers we will run in Fargate. Two rules,
+  # allowing network traffic from a public facing load balancer and
+  # from other members of the security group.
+  ECSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Application}-ECSClusterSecurityGroup
+      GroupDescription: Controls access to the Fargate containers.
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${VPCStack}:${Environment}:VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-ECSClusterSecurityGroup
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  ECSClusterSecurityGroupRule1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow ingress access to Fargate containers from public-facing ALB.
+      GroupId: !Ref ECSClusterSecurityGroup
+      SourceSecurityGroupId:
+        Fn::ImportValue:
+          !Sub ${VPCStack}:${Environment}:AllowIngressFromInternetSecurityGroup
+      IpProtocol: -1
+
+  ECSClusterSecurityGroupRule2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow ingress access to Fargate containers from Fargate containers.
+      GroupId: !Ref ECSClusterSecurityGroup
+      SourceSecurityGroupId: !Ref ECSClusterSecurityGroup
+      IpProtocol: -1
+
+  # This is an IAM role which authorizes ECS to manage resources on your
+  # account on your behalf, such as updating your load balancer with the
+  # details of where your containers are, so that traffic can reach your containers.
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: AmazonECSRolePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+
+                  # Rules which allow ECS to attach network interfaces to instances
+                  # on your behalf in order for awsvpc networking mode to work right.
+                  - ec2:AttachNetworkInterface
+                  - ec2:CreateNetworkInterface
+                  - ec2:CreateNetworkInterfacePermission
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DeleteNetworkInterfacePermission
+                  - ec2:Describe*
+                  - ec2:DetachNetworkInterface
+
+                  # Rules which allow ECS to update load balancers on your behalf
+                  # with the information sabout how to send traffic to your containers.
+                  - elasticloadbalancing:DeregisterInstancesFromLoadBalancer
+                  - elasticloadbalancing:DeregisterTargets
+                  - elasticloadbalancing:Describe*
+                  - elasticloadbalancing:RegisterInstancesWithLoadBalancer
+                  - elasticloadbalancing:RegisterTargets
+                Resource: '*'
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-ECSRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # This is a role which is used by the ECS tasks themselves. This gives
+  # task definitions the ability to execute the attached policies to
+  # manage containers.
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: AmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+
+                  # Allow the ECS Tasks to download images from ECR.
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+
+                  # Allow the ECS tasks to upload logs to CloudWatch.
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-ECSTaskExecutionRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+Outputs:
+  ECSCluster:
+    Description: The name of the ECS cluster.
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSCluster
+
+  ECSClusterSecurityGroup:
+    Description: A security group used to allow Fargate containers to receive traffic.
+    Value: !Ref ECSClusterSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSClusterSecurityGroup
+
+  ECSRole:
+    Description: The ID of the ECS role.
+    Value: !Ref ECSRole
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSRole
+
+  ECSRoleARN:
+    Description: The ARN of the ECS role.
+    Value: !GetAtt ECSRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSRoleARN
+
+  ECSTaskExecutionRole:
+    Description: The ID of the ECS role.
+    Value: !Ref ECSTaskExecutionRole
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSTaskExecutionRole
+
+  ECSTaskExecutionRoleARN:
+    Description: The ARN of the ECS role.
+    Value: !GetAtt ECSTaskExecutionRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSTaskExecutionRoleARN

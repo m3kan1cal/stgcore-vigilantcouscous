@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template deploys a service on ECS for AWS Fargate, hosted in a private subnet,
+             and is accessible via a public load balancer. It also deploys a partner
+             AWS ECS Container Registry (Amazon ECR) repository, where users can push and
+             pull Docker and/or container images.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Account Details
+        Parameters:
+          - AccountSet
+          - Owner
+          - SecurityContact
+      - Label:
+          default: Repository Details
+        Parameters:
+          - RepositoryName
+      - Label:
+          default: Required Tags
+        Parameters:
+          - Environment
+          - Customer
+          - Application
+          - ApplicationVersion
+          - ApplicationRole
+          - InfrastructureVersion
+          - ProjectCostCenter
+          - OperatingCostCenter
+          - Confidentiality
+          - Compliance
+          - AutomateOption
+          - AutomateAt
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: shouldroforion/stgcore-vigilantcouscous
+    Description: A name for the ECR repository.
+
+  # Mandatory tags that will be added to all resources that support tags.
+  # https://aws.amazon.com/answers/account-management/aws-tagging-strategies/
+  AccountSet:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: stoic
+    Description: Name of the Account Set to deploy to.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - sandbox
+      - nonprod
+      - prod
+    Default: sandbox
+    ConstraintDescription: Must be a valid environment.
+    Description: Used to distinguish between sandbox, development, test, and production
+                 infrastructure.
+
+  Customer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: STG
+    ConstraintDescription: Must be a valid customer name.
+    Description: Used to identify a specific client that a particular group of
+                 resources serves.
+
+  Application:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: STGVigilantCouscous
+    ConstraintDescription: Must be a valid application and resource prefix.
+    Description: In this capacity, application does not refer to an installed software component,
+                 but rather the overall business application that the resource supports. Also,
+                 used as the resource prefix for other resources.
+
+  ApplicationVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid application version.
+    Description: Used to help distinguish between different versions of resources or
+                 applications. Format should be Pattern - '#.#.#'.
+
+  ApplicationRole:
+    Type: String
+    AllowedValues:
+      - Networking
+      - WebServer
+      - MessageBroker
+      - Database
+      - WebUI
+      - DataCache
+      - Orchestrator
+    Default: Orchestrator
+    ConstraintDescription: Must be a valid application role.
+    Description: Used to describe the function of a particular resource (e.g. networking,
+                 web server, message broker, database).
+
+  InfrastructureVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid infrastructure version.
+    Description: Used to help distinguish between different versions of resources or applications.
+                 Format should be Pattern - '#.#.#'.
+
+  ProjectCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  OperatingCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  Owner:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: Used to identify who is responsible for the resource.
+
+  SecurityContact:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: The owner key is used to designate the CBG team associated with the given
+                 AWS resource.
+
+  Confidentiality:
+    Type: String
+    AllowedValues:
+      - Public
+      - Private
+      - Confidential
+      - PII/PHI
+    Default: PII/PHI
+    ConstraintDescription: Must be a valid data-confidentiality level.
+    Description: An identifier for the specific data-confidentiality level a resource supports.
+
+  Compliance:
+    Type: String
+    AllowedValues:
+      - HIPAA
+      - SOX
+      - FIPS
+      - Other
+      - None
+    Default: HIPAA
+    ConstraintDescription: Must be a valid compliance level.
+    Description: An identifier for workloads designed to adhere to specific compliance requirements.
+
+  AutomateOption:
+    Type: String
+    AllowedValues:
+      - OptIn
+      - OptOut
+    Default: OptIn
+    ConstraintDescription: Must be a valid automation level.
+    Description: Used to indicate whether a resource should be automatically included in an
+                 automated activity such as starting, stopping, or resizing instances.
+
+  AutomateAt:
+    Type: String
+    AllowedPattern: '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]'
+    Default: '9999-12-31 13:37'
+    ConstraintDescription: Must be a valid date timestamp in YYYY-MM-DD HH:MM timestamp format.
+    Description: Used to identify the date or time a resource should be started, stopped,
+                 deleted, or rotated.
+
+Resources:
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+
+          # Reference: https://docs.aws.amazon.com/AmazonECR/latest/userguide/RepositoryPolicyExamples.html
+          - Sid: AllowPushPull
+            Effect: Allow
+            Principal:
+              AWS:
+                - '*'
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-ECRRepository
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+Outputs:
+  ECRRepository:
+    Description: The ID of the Amazon ECR repository for managing Docker images.
+    Value: !Ref ECRRepository
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECRRepository
+
+  ECRRepositoryARN:
+    Description: The ARN of the Amazon ECR repository for managing Docker images.
+    Value: !GetAtt ECRRepository.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECRRepositoryARN
+
+  ECRRepositoryURL:
+    Description: The URL of the Amazon ECR repository for managing Docker images.
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepositoryName}
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECRRepositoryURL

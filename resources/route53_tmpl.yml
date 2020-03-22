@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template deploys some Route53 hosted zones and the associated record
+             sets for each hosted zone. Most record sets should be alias record set groups, not
+             just record sets.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Account Details
+        Parameters:
+          - AccountSet
+          - Owner
+          - SecurityContact
+      - Label:
+          default: Related Stacks
+        Parameters:
+          - VPCStack
+      - Label:
+          default: Configuration
+        Parameters:
+          - HostedZoneName
+          - HostedZoneID
+      - Label:
+          default: Required Tags
+        Parameters:
+          - Environment
+          - Customer
+          - Application
+          - ApplicationVersion
+          - ApplicationRole
+          - InfrastructureVersion
+          - ProjectCostCenter
+          - OperatingCostCenter
+          - Confidentiality
+          - Compliance
+          - AutomateOption
+          - AutomateAt
+
+Parameters:
+  VPCStack:
+    Type: String
+    ConstraintDescription: Must be a valid parent stack name for references within this template.
+    Description: The parent stack name for references within this template.
+
+  HostedZoneName:
+    Type: String
+    AllowedPattern: ([0-9A-Za-z-]{2,3}|[0-9A-Za-z-]{2,}\.[0-9A-Za-z]{2,3})$
+    ConstraintDescription: Must be a valid Route53 zone name in the form of FQDN
+                           shortened, like domain.com.
+    Description: The Apps Route53 zone name in the form of FQDN shortened, like domain.com.
+
+  HostedZoneID:
+    Type: String
+    AllowedPattern: '[0-9A-Za-z]*'
+    ConstraintDescription: Must be a valid Route53 hosted zone ID.
+    Description: The Route53 hosted zone ID.
+
+  # Mandatory tags that will be added to all resources that support tags.
+  # https://aws.amazon.com/answers/account-management/aws-tagging-strategies/
+  AccountSet:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: stoic
+    Description: Name of the Account Set to deploy to.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - sandbox
+      - nonprod
+      - prod
+    Default: sandbox
+    ConstraintDescription: Must be a valid environment.
+    Description: Used to distinguish between sandbox, development, test, and production
+                 infrastructure.
+
+  Customer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: 'STG'
+    ConstraintDescription: Must be a valid customer name.
+    Description: Used to identify a specific client that a particular group of
+                 resources serves.
+
+  Application:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: 'STGPillarOfAutumn'
+    ConstraintDescription: Must be a valid application and resource prefix.
+    Description: In this capacity, application does not refer to an installed software component,
+                 but rather the overall business application that the resource supports. Also,
+                 used as the resource prefix for other resources.
+
+  ApplicationVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid application version.
+    Description: Used to help distinguish between different versions of resources or
+                 applications. Format should be Pattern - '#.#.#'.
+
+  ApplicationRole:
+    Type: String
+    AllowedValues:
+      - Networking
+      - WebServer
+      - MessageBroker
+      - Database
+      - WebUI
+      - DataCache
+    Default: Networking
+    ConstraintDescription: Must be a valid application role.
+    Description: Used to describe the function of a particular resource (e.g. networking,
+                 web server, message broker, database).
+
+  InfrastructureVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid infrastructure version.
+    Description: Used to help distinguish between different versions of resources or applications.
+                 Format should be Pattern - '#.#.#'.
+
+  ProjectCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9498675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  OperatingCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9498675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  Owner:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: Used to identify who is responsible for the resource.
+
+  SecurityContact:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: The owner key is used to designate the CBG team associated with the given
+                 AWS resource.
+
+  Confidentiality:
+    Type: String
+    AllowedValues:
+      - Public
+      - Private
+      - Confidential
+      - PII/PHI
+    Default: PII/PHI
+    ConstraintDescription: Must be a valid data-confidentiality level.
+    Description: An identifier for the specific data-confidentiality level a resource supports.
+
+  Compliance:
+    Type: String
+    AllowedValues:
+      - HIPAA
+      - SOX
+      - FIPS
+      - Other
+      - None
+    Default: HIPAA
+    ConstraintDescription: Must be a valid compliance level.
+    Description: An identifier for workloads designed to adhere to specific compliance requirements.
+
+  AutomateOption:
+    Type: String
+    AllowedValues:
+      - OptIn
+      - OptOut
+    Default: OptIn
+    ConstraintDescription: Must be a valid automation level.
+    Description: Used to indicate whether a resource should be automatically included in an
+                 automated activity such as starting, stopping, or resizing instances.
+
+  AutomateAt:
+    Type: String
+    AllowedPattern: '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]'
+    Default: '9999-12-31 13:37'
+    ConstraintDescription: Must be a valid date timestamp in YYYY-MM-DD HH:MM timestamp format.
+    Description: Used to identify the date or time a resource should be started, stopped,
+                 deleted, or rotated.
+
+Resources:
+
+  # Hosted zone for *apps.com and related record sets.
+  RecordSetGroup:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneID
+      Comment: Zone apex alias targeted to public Load Balancer.
+      RecordSets:
+        - Name: !Sub albx.${HostedZoneName}
+          Type: A
+          AliasTarget:
+            HostedZoneId:
+              Fn::ImportValue:
+                !Sub ${VPCStack}:${Environment}:LoadBalancerHostedZone
+            DNSName:
+              Fn::ImportValue:
+                !Sub ${VPCStack}:${Environment}:ExternalDNSName

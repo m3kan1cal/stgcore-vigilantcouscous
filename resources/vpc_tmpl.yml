@@ -1,0 +1,1471 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template deploys a VPC, with a pair of public and private subnets spread
+             across two Availability Zones. It deploys an Internet Gateway, with a default
+             route on the public subnets. It deploys a pair of FortiGate VMs (one in each AZ),
+             and default routes for them in the private subnets.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Account Details
+        Parameters:
+          - AccountSet
+          - Owner
+          - SecurityContact
+      - Label:
+          default: VPC Configuration
+        Parameters:
+          - NumSubnets
+          - HasEndpoints
+          - ACMARN
+      - Label:
+          default: Required Tags
+        Parameters:
+          - Environment
+          - Customer
+          - Application
+          - ApplicationVersion
+          - ApplicationRole
+          - InfrastructureVersion
+          - ProjectCostCenter
+          - OperatingCostCenter
+          - Confidentiality
+          - Compliance
+          - AutomateOption
+          - AutomateAt
+
+Mappings:
+
+  # Hard values for the subnet masks. These masks define the range of
+  # internal IP addresses that can be assigned. The VPC can have all
+  # IP's from 10.180.0.0 to 10.180.255.255.
+  SubnetConfig:
+    NonProd:
+      VPCCIDR: 10.192.0.0/16
+      Public1CIDR: 10.192.0.0/20
+      Public2CIDR: 10.192.16.0/20
+      Public3CIDR: 10.192.32.0/20
+      Private1CIDR: 10.192.48.0/20
+      Private2CIDR: 10.192.64.0/20
+      Private3CIDR: 10.192.80.0/20
+    Prod:
+      VPCCIDR: 10.192.0.0/16
+      Public1CIDR: 10.192.0.0/20
+      Public2CIDR: 10.192.16.0/20
+      Public3CIDR: 10.192.32.0/20
+      Private1CIDR: 10.192.48.0/20
+      Private2CIDR: 10.192.64.0/20
+      Private3CIDR: 10.192.80.0/20
+
+Parameters:
+  NumSubnets:
+    Type: String
+    AllowedValues:
+      - 1
+      - 2
+      - 3
+    Default: 1
+    Description: The number of subnets to create. The maximum number is three.
+
+  HasEndpoints:
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    Default: true
+    Description: Used to determine if interface or gateway endpoints should be created
+                 during stack creation.
+
+  ACMARN:
+    Type: String
+    ConstraintDescription: Must be a valid certificate ARN for references within this template.
+    Description: The certificate ARN for references within this template.
+
+  # Mandatory tags that will be added to all resources that support tags.
+  # https://aws.amazon.com/answers/account-management/aws-tagging-strategies/
+  AccountSet:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: stoic
+    Description: Name of the Account Set to deploy to.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - sandbox
+      - nonprod
+      - prod
+    Default: sandbox
+    ConstraintDescription: Must be a valid environment.
+    Description: Used to distinguish between sandbox, development, test, and production
+                 infrastructure.
+
+  Customer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: 'STG'
+    ConstraintDescription: Must be a valid customer name.
+    Description: Used to identify a specific client that a particular group of
+                 resources serves.
+
+  Application:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: 'STGPillarOfAutumn'
+    ConstraintDescription: Must be a valid application and resource prefix.
+    Description: In this capacity, application does not refer to an installed software component,
+                 but rather the overall business application that the resource supports. Also,
+                 used as the resource prefix for other resources.
+
+  ApplicationVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid application version.
+    Description: Used to help distinguish between different versions of resources or
+                 applications. Format should be Pattern - '#.#.#'.
+
+  ApplicationRole:
+    Type: String
+    AllowedValues:
+      - Networking
+      - WebServer
+      - MessageBroker
+      - Database
+      - WebUI
+      - DataCache
+    Default: Networking
+    ConstraintDescription: Must be a valid application role.
+    Description: Used to describe the function of a particular resource (e.g. networking,
+                 web server, message broker, database).
+
+  InfrastructureVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid infrastructure version.
+    Description: Used to help distinguish between different versions of resources or applications.
+                 Format should be Pattern - '#.#.#'.
+
+  ProjectCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  OperatingCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  Owner:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: Used to identify who is responsible for the resource.
+
+  SecurityContact:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: The owner key is used to designate the STG team associated with the given
+                 AWS resource.
+
+  Confidentiality:
+    Type: String
+    AllowedValues:
+      - Public
+      - Private
+      - Confidential
+      - PII/PHI
+    Default: PII/PHI
+    ConstraintDescription: Must be a valid data-confidentiality level.
+    Description: An identifier for the specific data-confidentiality level a resource supports.
+
+  Compliance:
+    Type: String
+    AllowedValues:
+      - HIPAA
+      - SOX
+      - FIPS
+      - Other
+      - None
+    Default: HIPAA
+    ConstraintDescription: Must be a valid compliance level.
+    Description: An identifier for workloads designed to adhere to specific compliance requirements.
+
+  AutomateOption:
+    Type: String
+    AllowedValues:
+      - OptIn
+      - OptOut
+    Default: OptIn
+    ConstraintDescription: Must be a valid automation level.
+    Description: Used to indicate whether a resource should be automatically included in an
+                 automated activity such as starting, stopping, or resizing instances.
+
+  AutomateAt:
+    Type: String
+    AllowedPattern: '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]'
+    Default: '9999-12-31 13:37'
+    ConstraintDescription: Must be a valid date timestamp in YYYY-MM-DD HH:MM timestamp format.
+    Description: Used to identify the date or time a resource should be started, stopped,
+                 deleted, or rotated.
+
+Conditions:
+  Has2Subnets: !Or
+    - !Equals [!Ref NumSubnets, 2]
+    - !Condition Has3Subnets
+
+  Has3Subnets:
+    !Equals [!Ref NumSubnets, 3]
+
+  HasEndpoints:
+    !Equals [!Ref HasEndpoints, true]
+
+  IsProd:
+    !Equals [!Ref Environment, 'prod']
+
+Resources:
+
+  # VPC in which containers will be networked. It has two public subnets
+  # We distribute the subnets across the first two available subnets
+  # for the region, for high availability.
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'VPCCIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'VPCCIDR']
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-VPC
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Two public subnets, where containers can have public IP addresses.
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'Public1CIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'Public1CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicSubnet1
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PublicSubnet2:
+    Condition: Has2Subnets
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs  '']
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'Public2CIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'Public2CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicSubnet2
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PublicSubnet3:
+    Condition: Has3Subnets
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs  '']
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'Public3CIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'Public3CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicSubnet3
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Two private subnets, where containers can only have private IP addresses.
+  # In addition, communication with the Internet is through NAT gateways
+  # in the public subnets.
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs  '']
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'Private1CIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'Private1CIDR']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateSubnet1
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PrivateSubnet2:
+    Condition: Has2Subnets
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs  '']
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'Private2CIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'Private2CIDR']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateSubnet2
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PrivateSubnet3:
+    Condition: Has3Subnets
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs  '']
+      CidrBlock: !If
+        - IsProd
+        - !FindInMap ['SubnetConfig', 'Prod', 'Private3CIDR']
+        - !FindInMap ['SubnetConfig', 'NonProd', 'Private3CIDR']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateSubnet3
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Setup networking resources for the public subnets. Containers
+  # in the public subnets have public IP addresses and the routing table
+  # sends network traffic via the internet gateway.
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-InternetGateway
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  NatGateway1EIP:
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Condition: Has2Subnets
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway3EIP:
+    Condition: Has3Subnets
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NatGateway2:
+    Condition: Has2Subnets
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+
+  NatGateway3:
+    Condition: Has3Subnets
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway3EIP.AllocationId
+      SubnetId: !Ref PublicSubnet3
+
+  # Resources for public subnet 1 routing.
+  PublicRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicRouteTable1
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PublicRouteTable1DefaultRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable1
+      SubnetId: !Ref PublicSubnet1
+
+  # Resources for public subnet 2 routing.
+  PublicRouteTable2:
+    Condition: Has2Subnets
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicRouteTable2
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PublicRouteTable2DefaultRoute1:
+    Condition: Has2Subnets
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet2RouteTableAssociation:
+    Condition: Has2Subnets
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable2
+      SubnetId: !Ref PublicSubnet2
+
+  # Resources for public subnet 3 routing.
+  PublicRouteTable3:
+    Condition: Has3Subnets
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicRouteTable3
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  PublicRouteTable3DefaultRoute1:
+    Condition: Has3Subnets
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet3RouteTableAssociation:
+    Condition: Has3Subnets
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable3
+      SubnetId: !Ref PublicSubnet3
+
+  # Resources for private subnet 1 routing.
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateRouteTable1
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  # Resources for private subnet 2 routing.
+  PrivateRouteTable2:
+    Condition: Has2Subnets
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateRouteTable2
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  DefaultPrivateRoute2:
+    Condition: Has2Subnets
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Condition: Has2Subnets
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  # Resources for private subnet 3 routing.
+  PrivateRouteTable3:
+    Condition: Has3Subnets
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateRouteTable3
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  DefaultPrivateRoute3:
+    Condition: Has3Subnets
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway3
+
+  PrivateSubnet3RouteTableAssociation:
+    Condition: Has3Subnets
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      SubnetId: !Ref PrivateSubnet3
+
+  # Allow access to ALB from anywhere on the internet.
+  AllowIngressFromInternetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Application}AllowIngressFromInternetSecurityGroup
+      GroupDescription: Allow access to ALB or other resources from anywhere on the internet.
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-AllowIngressFromInternetSecurityGroup
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Deny access to resources from the internet. This group
+  # should have no ingress rules, restricting inbound traffic.
+  DenyIngressFromAllSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Application}DenyIngressFromAllSecurityGroup
+      GroupDescription: Deny access to resources from the internet.
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-DenyIngressFromAllSecurityGroup
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Allow ingress to all ports for source group.
+  AllowProtectedIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${Application}AllowProtectedIngressSecurityGroup
+      GroupDescription:  Allow access to internal VPC resources from same source group.
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-AllowIngressFromInternalSecurityGroup
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  AllowProtectedIngressSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AllowProtectedIngressSecurityGroup
+      Description: Self reference to allow access to VPC resource to all ports.
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref AllowProtectedIngressSecurityGroup
+
+  # Load balancers for getting traffic to internal resources. Create one
+  # load balancer hosted in public subnets that is accessible to the public,
+  # and is intended to route traffic to one or more public facing services.
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: 30
+      Subnets: !If
+        - Has2Subnets
+        - - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+          - !If
+            - Has3Subnets
+            - !Ref PublicSubnet3
+            - !Ref AWS::NoValue
+        - - !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref AllowIngressFromInternetSecurityGroup
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicLoadBalancer
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # A dummy target group is used to setup the ALB to just drop traffic
+  # initially, before any real service target groups have been added.
+  DummyPublicTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 6
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Name: !Sub ${Customer}-DummyPublic-TargetGroup
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: DummyPublic-TargetGroup
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  HTTPLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: PublicLoadBalancer
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref DummyPublicTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  HTTPSLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: PublicLoadBalancer
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref DummyPublicTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS-1-2-2017-01
+      Certificates:
+        - CertificateArn: !Ref ACMARN
+
+  # Optional layer of security for our VPC that acts as a firewall for controlling
+  # traffic in and out of one or more public subnets.
+  PublicSubnetsNetworkACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PublicSubnetsNetworkACL
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Optional layer of security for our VPC that acts as a firewall for controlling
+  # traffic in and out of one or more private subnets.
+  PrivateSubnetsNetworkACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-PrivateSubnetsNetworkACL
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+# Outputs for created resources.
+Outputs:
+  VPC:
+    Description: A reference to the created VPC.
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:VPC
+
+  PublicRouteTable1:
+    Description: A reference to the public route table holding public routes.
+    Value: !Ref PublicRouteTable1
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicRouteTable1
+
+  PublicRouteTable2:
+    Condition: Has2Subnets
+    Description: A reference to the public route table holding public routes.
+    Value: !Ref PublicRouteTable2
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicRouteTable2
+
+  PublicRouteTable3:
+    Condition: Has3Subnets
+    Description: A reference to the public route table holding public routes.
+    Value: !Ref PublicRouteTable3
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicRouteTable3
+
+  PrivateRouteTable1:
+    Description: A reference to the private route table holding private routes.
+    Value: !Ref PrivateRouteTable1
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateRouteTable1
+
+  PrivateRouteTable2:
+    Condition: Has2Subnets
+    Description: A reference to the private route table holding private routes.
+    Value: !Ref PrivateRouteTable2
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateRouteTable2
+
+  PrivateRouteTable3:
+    Condition: Has3Subnets
+    Description: A reference to the private route table holding private routes.
+    Value: !Ref PrivateRouteTable3
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateRouteTable3
+
+  PublicSubnet1:
+    Description: A reference to the public subnet in the 1st AZ.
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicSubnet1
+
+  PublicSubnet2:
+    Condition: Has2Subnets
+    Description: A reference to the public subnet in the 2nd AZ.
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicSubnet2
+
+  PublicSubnet3:
+    Condition: Has3Subnets
+    Description: A reference to the public subnet in the 3rd AZ.
+    Value: !Ref PublicSubnet3
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicSubnet3
+
+  PrivateSubnet1:
+    Description: A reference to the private subnet in the 1st AZ.
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateSubnet1
+
+  PrivateSubnet2:
+    Condition: Has2Subnets
+    Description: A reference to the private subnet in the 2nd AZ.
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateSubnet2
+
+  PrivateSubnet3:
+    Condition: Has3Subnets
+    Description: A reference to the private subnet in the 3rd AZ.
+    Value: !Ref PrivateSubnet3
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateSubnet3
+
+  InternetGateway:
+    Description: A list of the Internet gateways.
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:InternetGateway
+
+  LoadBalancerHostedZone:
+    Description: The hosted zone ID of the public load balancer.
+    Value: !GetAtt PublicLoadBalancer.CanonicalHostedZoneID
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:LoadBalancerHostedZone
+
+  LoadBalancerExternalDNSName:
+    Description: The url of the external load balancer.
+    Value: !GetAtt PublicLoadBalancer.DNSName
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ExternalDNSName
+
+  LoadBalancerExternalURL:
+    Description: The url of the external load balancer.
+    Value: !Join ['', ['http://', !GetAtt PublicLoadBalancer.DNSName]]
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ExternalURL
+
+  DenyIngressFromAllSecurityGroup:
+    Description: Deny access to resources from the internet.
+    Value: !Ref DenyIngressFromAllSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:DenyIngressFromAllSecurityGroup
+
+  AllowIngressFromInternetSecurityGroup:
+    Description: Allow access to ALB or other resources from anywhere on the internet.
+    Value: !Ref AllowIngressFromInternetSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:AllowIngressFromInternetSecurityGroup
+
+  AllowProtectedIngressSecurityGroup:
+    Description: Allow access to internal VPC resources from same source group.
+    Value: !Ref AllowProtectedIngressSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:AllowProtectedIngressSecurityGroup
+
+  HTTPLoadBalancerListener:
+    Description: The ARN of the public load balancer's listener.
+    Value: !Ref HTTPLoadBalancerListener
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:HTTPLoadBalancerListener
+
+  HTTPSLoadBalancerListener:
+    Description: The ARN of the public load balancer's listener.
+    Value: !Ref HTTPSLoadBalancerListener
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:HTTPSLoadBalancerListener
+
+  PublicSubnetsNetworkACL:
+    Description: The resource name of the public subnets network ACL.
+    Value: !Ref PublicSubnetsNetworkACL
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PublicSubnetsNetworkACL
+
+  PrivateSubnetsNetworkACL:
+    Description: The resource name of the private subnets network ACL.
+    Value: !Ref PrivateSubnetsNetworkACL
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:PrivateSubnetsNetworkACL

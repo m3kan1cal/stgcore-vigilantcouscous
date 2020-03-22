@@ -1,0 +1,537 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template deploys a service on ECS for AWS Fargate, hosted in a private subnet,
+             and is accessible via a public load balancer.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Account Details
+        Parameters:
+          - AccountSet
+          - Owner
+          - SecurityContact
+      - Label:
+          default: Related Stacks
+        Parameters:
+          - VPCStack
+          - ECSStack
+      - Label:
+          default: Service Details
+        Parameters:
+          - ServiceName
+          - ImageUrl
+          - ContainerPort
+          - ContainerCpu
+          - ContainerMemory
+          - Path
+          - Priority
+          - DesiredCount
+          - CustomRole
+          - NumZones
+      - Label:
+          default: Required Tags
+        Parameters:
+          - Environment
+          - Customer
+          - Application
+          - ApplicationVersion
+          - ApplicationRole
+          - InfrastructureVersion
+          - ProjectCostCenter
+          - OperatingCostCenter
+          - Confidentiality
+          - Compliance
+          - AutomateOption
+          - AutomateAt
+
+Parameters:
+  VPCStack:
+    Type: String
+    ConstraintDescription: Must be a valid parent stack name for references within this template.
+    Description: The parent stack name for references within this template.
+
+  ECSStack:
+    Type: String
+    ConstraintDescription: Must be a valid parent stack name for references within this template.
+    Description: The parent stack name for references within this template.
+
+  ServiceName:
+    Type: String
+    Default: nginx
+    Description: A name for the service.
+
+  ImageUrl:
+    Type: String
+    Default: nginx
+    Description: The url of a docker image that contains the application process that
+                 will handle the traffic for this service.
+
+  ContainerPort:
+    Type: Number
+    Default: 80
+    Description: What port number the application inside the docker container is binding to.
+
+  ContainerCpu:
+    Type: Number
+    Default: 256
+    Description: How much CPU to give the container. 1024 is 1 CPU.
+
+  ContainerMemory:
+    Type: Number
+    Default: 512
+    Description: How much memory in megabytes to give the container.
+
+  Path:
+    Type: String
+    AllowedPattern: '[a-z0-9*]*'
+    Default: '*'
+    Description: A path on the public load balancer that this service should be connected to.
+                 Use * to send all load balancer traffic to this service.
+
+  Priority:
+    Type: Number
+    Default: 1
+    Description: The priority for the routing rule added to the load balancer.
+                 This only applies if your have multiple services which have been
+                 assigned to different paths on the load balancer.
+
+  DesiredCount:
+    Type: Number
+    Default: 2
+    Description: How many copies of the service task to run.
+
+  CustomRole:
+    Type: String
+    Default: ''
+    Description: (Optional) An IAM role to give the service's containers if the code within needs to
+                 access other AWS resources like S3 buckets, DynamoDB tables, etc.
+
+  NumZones:
+    Type: String
+    AllowedValues:
+      - 1
+      - 2
+      - 3
+    Default: 2
+    Description: The number of Availability Zones we want to spread services through. The
+                 maximum number is three.
+
+  # Mandatory tags that will be added to all resources that support tags.
+  # https://aws.amazon.com/answers/account-management/aws-tagging-strategies/
+  AccountSet:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: stoic
+    Description: Name of the Account Set to deploy to.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - sandbox
+      - nonprod
+      - prod
+    Default: sandbox
+    ConstraintDescription: Must be a valid environment.
+    Description: Used to distinguish between sandbox, development, test, and production
+                 infrastructure.
+
+  Customer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: STG
+    ConstraintDescription: Must be a valid customer name.
+    Description: Used to identify a specific client that a particular group of
+                 resources serves.
+
+  Application:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: STGVigilantCouscous
+    ConstraintDescription: Must be a valid application and resource prefix.
+    Description: In this capacity, application does not refer to an installed software component,
+                 but rather the overall business application that the resource supports. Also,
+                 used as the resource prefix for other resources.
+
+  ApplicationVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid application version.
+    Description: Used to help distinguish between different versions of resources or
+                 applications. Format should be Pattern - '#.#.#'.
+
+  ApplicationRole:
+    Type: String
+    AllowedValues:
+      - Networking
+      - WebServer
+      - MessageBroker
+      - Database
+      - WebUI
+      - DataCache
+    Default: WebServer
+    ConstraintDescription: Must be a valid application role.
+    Description: Used to describe the function of a particular resource (e.g. networking,
+                 web server, message broker, database).
+
+  InfrastructureVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid infrastructure version.
+    Description: Used to help distinguish between different versions of resources or applications.
+                 Format should be Pattern - '#.#.#'.
+
+  ProjectCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9498675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  OperatingCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9498675309'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  Owner:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: Used to identify who is responsible for the resource.
+
+  SecurityContact:
+    Type: String
+    Default: 'fireteamosiris@yourdomain.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: The owner key is used to designate the CBG team associated with the given
+                 AWS resource.
+
+  Confidentiality:
+    Type: String
+    AllowedValues:
+      - Public
+      - Private
+      - Confidential
+      - PII/PHI
+    Default: PII/PHI
+    ConstraintDescription: Must be a valid data-confidentiality level.
+    Description: An identifier for the specific data-confidentiality level a resource supports.
+
+  Compliance:
+    Type: String
+    AllowedValues:
+      - HIPAA
+      - SOX
+      - FIPS
+      - Other
+      - None
+    Default: HIPAA
+    ConstraintDescription: Must be a valid compliance level.
+    Description: An identifier for workloads designed to adhere to specific compliance requirements.
+
+  AutomateOption:
+    Type: String
+    AllowedValues:
+      - OptIn
+      - OptOut
+    Default: OptIn
+    ConstraintDescription: Must be a valid automation level.
+    Description: Used to indicate whether a resource should be automatically included in an
+                 automated activity such as starting, stopping, or resizing instances.
+
+  AutomateAt:
+    Type: String
+    AllowedPattern: '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]'
+    Default: '9999-12-31 13:37'
+    ConstraintDescription: Must be a valid date timestamp in YYYY-MM-DD HH:MM timestamp format.
+    Description: Used to identify the date or time a resource should be started, stopped,
+                 deleted, or rotated.
+
+Conditions:
+  HasCustomRole: !Not [!Equals [!Ref CustomRole, '']]
+
+  Has2Zones: !Or
+    - !Equals [!Ref NumZones, 2]
+    - !Condition Has3Zones
+
+  Has3Zones:
+    !Equals [!Ref NumZones, 3]
+
+Resources:
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/fargate/${Application}-${ServiceName}LogGroup
+      RetentionInDays: 365
+
+  # Specifies a target group for an Application Load Balancer or Network Load Balancer.
+  # Most often this target group is just connected to an application load balancer, or
+  # network load balancer, so it can automatically distribute traffic across all the targets.
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${Application}-TargetGroup1
+      TargetType: ip
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200-399
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${VPCStack}:${Environment}:VPC
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-TargetGroup1
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # Create a rule on the load balancer for routing traffic to the target group.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-elasticloadbalancingv2-listenerrule-conditions.html
+  HTTPListenerRule:
+    DependsOn: TargetGroup
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: 443
+            Host: '#{host}'
+            Path: '/#{path}'
+            Query: '#{query}'
+            StatusCode: HTTP_301
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !Sub /${Path}
+            - !Sub /${Path}/*
+      ListenerArn:
+        Fn::ImportValue:
+          !Sub ${VPCStack}:${Environment}:HTTPLoadBalancerListener
+      Priority: !Ref Priority
+
+  HTTPSListenerRule:
+    DependsOn: TargetGroup
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !Sub /${Path}
+            - !Sub /${Path}/*
+      ListenerArn:
+        Fn::ImportValue:
+          !Sub ${VPCStack}:${Environment}:HTTPSLoadBalancerListener
+      Priority: !Ref Priority
+
+  # The task definition. This describes the container and volume definitions
+  # of an Amazon Elastic Container Service (Amazon ECS) task. You can specify
+  # which Docker images to use, the required resources, and other configurations
+  # related to launching the task definition through an Amazon ECS service or task.
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${Application}-ECSTaskFamily
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn:
+        Fn::ImportValue:
+          !Sub ${ECSStack}:${Environment}:ECSTaskExecutionRoleARN
+      TaskRoleArn:
+        Fn::If:
+          - HasCustomRole
+          - !Ref CustomRole
+          - !Ref 'AWS::NoValue'
+      ContainerDefinitions:
+        - Name: !Sub ${Application}-${ServiceName}ECSService
+          Cpu: !Ref ContainerCpu
+          Memory: !Ref ContainerMemory
+          Image: !Ref ImageUrl
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          Environment:
+            - Name: ENV_VAR
+              Value: SomeValue
+          HealthCheck:
+            Command: ['CMD-SHELL', 'curl -f http://localhost/ || exit 1']
+            Interval: 30
+            Retries: 3
+            Timeout: 5
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref Path
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-${ServiceName}ECSTaskDefinition
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  # The service. The service resource creates an Amazon Elastic Container Service
+  # (Amazon ECS) service that runs and maintains the requested number of tasks
+  # and associated load balancers.
+  ECSService:
+    DependsOn: HTTPListenerRule
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${Application}-${ServiceName}ECSService
+      Cluster:
+        Fn::ImportValue:
+          !Sub ${ECSStack}:${Environment}:ECSCluster
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref DesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - Fn::ImportValue:
+                !Sub ${ECSStack}:${Environment}:ECSClusterSecurityGroup
+          Subnets: !If
+            - Has2Zones
+            - - Fn::ImportValue:
+                  !Sub ${VPCStack}:${Environment}:PrivateSubnet1
+              - Fn::ImportValue:
+                  !Sub ${VPCStack}:${Environment}:PrivateSubnet2
+              - !If
+                - Has3Zones
+                - Fn::ImportValue:
+                    !Sub ${VPCStack}:${Environment}:PrivateSubnet3
+                - !Ref AWS::NoValue
+            - - Fn::ImportValue:
+                  !Sub ${VPCStack}:${Environment}:PrivateSubnet1
+      TaskDefinition: !Ref ECSTaskDefinition
+      LoadBalancers:
+        - ContainerName: !Sub ${Application}-${ServiceName}ECSService
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-${ServiceName}ECSService
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+Outputs:
+  ECSTaskDefinition:
+    Description: The task definition of the ECS service running in Fargate.
+    Value: !Ref ECSTaskDefinition
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSTaskDefinition
+
+  ECSService:
+    Description: The ARN of the ECS service running in Fargate.
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub ${AWS::StackName}:${Environment}:ECSService
